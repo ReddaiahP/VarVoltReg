@@ -16,8 +16,16 @@
 #define DISPLAY_WIDTH  240U
 #define DISPLAY_HEIGHT 320U
 #define SPI_TRANSFER_CHUNK_SIZE 4096U
+#define ILI9341_MADCTL 0x36U
+#define ILI9341_PIXFMT 0x3AU
+#define ILI9341_MADCTL_BGR 0x08U
+#define ILI9341_MADCTL_MV  0x20U
+#define ILI9341_MADCTL_MX  0x40U
+#define ILI9341_MADCTL_MY  0x80U
 
 spi_device_handle_t spi;
+static uint16_t display_width = DISPLAY_WIDTH;
+static uint16_t display_height = DISPLAY_HEIGHT;
 
 void display_gpio_init(void) {
     gpio_set_direction(PIN_NUM_DC, GPIO_MODE_OUTPUT);
@@ -71,6 +79,23 @@ void send_data(const uint8_t *data, int len) {
     spi_device_transmit(spi, &t);
 }
 
+static void send_pixels(const uint8_t *data, size_t byte_count) {
+    gpio_set_level(PIN_NUM_DC, 1);
+
+    while (byte_count > 0U) {
+        size_t chunk = byte_count > SPI_TRANSFER_CHUNK_SIZE
+                           ? SPI_TRANSFER_CHUNK_SIZE
+                           : byte_count;
+        spi_transaction_t t = {
+            .length = chunk * 8U,
+            .tx_buffer = data,
+        };
+        spi_device_transmit(spi, &t);
+        data += chunk;
+        byte_count -= chunk;
+    }
+}
+
 void set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
     uint8_t caset[] = {x0 >> 8, x0 & 0xFF, x1 >> 8, x1 & 0xFF};
     uint8_t raset[] = {y0 >> 8, y0 & 0xFF, y1 >> 8, y1 & 0xFF};
@@ -84,46 +109,83 @@ void fill_color(uint16_t color) {
     clear_screen(color);
 }
 
-/* 1. New: Clear entire screen */
-void clear_screen(uint16_t color) {
-    set_window(0, 0, 239, 319);
+void display_set_rotation(display_rotation_t rotation) {
+    static const uint8_t madctl_values[] = {
+        ILI9341_MADCTL_MX | ILI9341_MADCTL_BGR,
+        ILI9341_MADCTL_MV | ILI9341_MADCTL_BGR,
+        ILI9341_MADCTL_MY | ILI9341_MADCTL_BGR,
+        ILI9341_MADCTL_MX | ILI9341_MADCTL_MY |
+            ILI9341_MADCTL_MV | ILI9341_MADCTL_BGR,
+    };
 
-    static uint8_t line_buf[240 * 2];
-    for (int i = 0; i < 240; i++) {
+    if (rotation > DISPLAY_ROTATION_270) {
+        return;
+    }
+
+    send_cmd(ILI9341_MADCTL);
+    send_data(&madctl_values[rotation], 1);
+
+    /* Some ILI9341-compatible modules need these settings re-latched. */
+    send_cmd(ILI9341_PIXFMT);
+    const uint8_t rgb565 = 0x55U;
+    send_data(&rgb565, 1);
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    if ((rotation & 1U) != 0U) {
+        display_width = DISPLAY_HEIGHT;
+        display_height = DISPLAY_WIDTH;
+    } else {
+        display_width = DISPLAY_WIDTH;
+        display_height = DISPLAY_HEIGHT;
+    }
+}
+
+uint16_t display_get_width(void) {
+    return display_width;
+}
+
+uint16_t display_get_height(void) {
+    return display_height;
+}
+
+void clear_screen(uint16_t color) {
+    set_window(0, 0, display_width - 1U, display_height - 1U);
+
+    static uint8_t line_buf[DISPLAY_HEIGHT * 2U];
+    for (uint16_t i = 0; i < display_width; i++) {
         line_buf[i * 2] = color >> 8;
         line_buf[i * 2 + 1] = color & 0xFF;
     }
 
-    gpio_set_level(PIN_NUM_DC, 1);
-    for (int y = 0; y < 320; y++) {
-        spi_transaction_t t = {
-            .length = 240 * 16,
-            .tx_buffer = line_buf,
-        };
-        spi_device_transmit(spi, &t);
+    for (uint16_t y = 0; y < display_height; y++) {
+        send_pixels(line_buf, (size_t)display_width * 2U);
     }
 }
 
-/* 2. New: Clear specific region */
 void clear_region(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t color) {
-    if (x1 < x0 || y1 < y0) return; // Safety check
+    if (x1 < x0 || y1 < y0 || x0 >= display_width || y0 >= display_height) {
+        return;
+    }
+
+    if (x1 >= display_width) {
+        x1 = display_width - 1U;
+    }
+    if (y1 >= display_height) {
+        y1 = display_height - 1U;
+    }
 
     set_window(x0, y0, x1, y1);
 
-    int width = x1 - x0 + 1;
-    static uint8_t buf[480]; // up to 240 pixels per line (2 bytes each)
-    for (int i = 0; i < width; i++) {
+    uint16_t width = x1 - x0 + 1U;
+    uint16_t height = y1 - y0 + 1U;
+    static uint8_t buf[DISPLAY_HEIGHT * 2U];
+    for (uint16_t i = 0; i < width; i++) {
         buf[i * 2] = color >> 8;
         buf[i * 2 + 1] = color & 0xFF;
     }
 
-    gpio_set_level(PIN_NUM_DC, 1);
-    for (int y = y0; y <= y1; y++) {
-        spi_transaction_t t = {
-            .length = width * 16,
-            .tx_buffer = buf,
-        };
-        spi_device_transmit(spi, &t);
+    for (uint16_t row = 0; row < height; row++) {
+        send_pixels(buf, (size_t)width * 2U);
     }
 }
 
@@ -135,39 +197,32 @@ void draw_image(uint16_t x0, uint16_t y0, uint16_t w, uint16_t h, const uint16_t
      * width; sending one contiguous clipped block would scramble the rows.
      */
     if (image_data == NULL || w == 0U || h == 0U ||
-        x0 >= DISPLAY_WIDTH || y0 >= DISPLAY_HEIGHT) {
+        x0 >= display_width || y0 >= display_height) {
         return;
     }
 
     uint16_t visible_w = w;
     uint16_t visible_h = h;
 
-    if ((uint32_t)x0 + w > DISPLAY_WIDTH) {
-        visible_w = DISPLAY_WIDTH - x0;
+    if ((uint32_t)x0 + w > display_width) {
+        visible_w = display_width - x0;
     }
-    if ((uint32_t)y0 + h > DISPLAY_HEIGHT) {
-        visible_h = DISPLAY_HEIGHT - y0;
+    if ((uint32_t)y0 + h > display_height) {
+        visible_h = display_height - y0;
     }
 
     set_window(x0, y0, x0 + visible_w - 1U, y0 + visible_h - 1U);
 
-    gpio_set_level(PIN_NUM_DC, 1);
+    /* A non-horizontally-clipped image is contiguous in memory. */
+    if (visible_w == w) {
+        send_pixels((const uint8_t *)image_data,
+                    (size_t)visible_w * visible_h * sizeof(*image_data));
+        return;
+    }
+
     for (uint16_t row = 0; row < visible_h; row++) {
         const uint8_t *data_ptr = (const uint8_t *)(image_data + ((size_t)row * w));
-        size_t bytes_remaining = (size_t)visible_w * sizeof(*image_data);
-
-        while (bytes_remaining > 0U) {
-            size_t chunk = bytes_remaining > SPI_TRANSFER_CHUNK_SIZE
-                               ? SPI_TRANSFER_CHUNK_SIZE
-                               : bytes_remaining;
-            spi_transaction_t t = {
-                .length = chunk * 8U,
-                .tx_buffer = data_ptr,
-            };
-            spi_device_transmit(spi, &t);
-            data_ptr += chunk;
-            bytes_remaining -= chunk;
-        }
+        send_pixels(data_ptr, (size_t)visible_w * sizeof(*image_data));
     }
 }
 
@@ -183,8 +238,8 @@ void ili9341_init(void) {
     send_cmd(0xC1); uint8_t c1[] = {0x10}; send_data(c1, 1);
     send_cmd(0xC5); uint8_t c5[] = {0x3e, 0x28}; send_data(c5, 2);
     send_cmd(0xC7); uint8_t c7[] = {0x86}; send_data(c7, 1);
-    send_cmd(0x36); uint8_t m[] = {0x48}; send_data(m, 1);
-    send_cmd(0x3A); uint8_t pix[] = {0x55}; send_data(pix, 1);
+    send_cmd(ILI9341_MADCTL); uint8_t m[] = {ILI9341_MADCTL_MX | ILI9341_MADCTL_BGR}; send_data(m, 1);
+    send_cmd(ILI9341_PIXFMT); uint8_t pix[] = {0x55}; send_data(pix, 1);
     send_cmd(0xB1); uint8_t b1[] = {0x00, 0x18}; send_data(b1, 2);
     send_cmd(0xB6); uint8_t b6[] = {0x08, 0x82, 0x27}; send_data(b6, 3);
     send_cmd(0xF2); uint8_t f2[] = {0x00}; send_data(f2, 1);

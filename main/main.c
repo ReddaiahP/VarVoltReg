@@ -21,10 +21,14 @@ void app_main(void)
     display_gpio_init();
     display_spi_init();
     ili9341_init();
-    clear_screen(COLOR_YELLOW);   // black background
-    while (1)
-    {
-        
-        draw_image(0,0, PROFILE_WIDTH, PROFILE_HEIGHT, profilePic);
+
+    /* Choose DISPLAY_ROTATION_0, _90, _180, or _270. */
+    display_set_rotation(DISPLAY_ROTATION_90);
+    clear_screen(COLOR_YELLOW);
+
+    draw_image(50, 0, PROFILE_WIDTH, PROFILE_HEIGHT, profilePic);
+
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

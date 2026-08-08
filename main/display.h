@@ -4,10 +4,20 @@
 #include "driver/spi_master.h"
 #include <stdint.h>
 
+typedef enum {
+    DISPLAY_ROTATION_0 = 0,
+    DISPLAY_ROTATION_90,
+    DISPLAY_ROTATION_180,
+    DISPLAY_ROTATION_270,
+} display_rotation_t;
+
 void display_gpio_init(void);
 void display_spi_init(void);
 void ili9341_init(void);
 void fill_color(uint16_t color);
+void display_set_rotation(display_rotation_t rotation);
+uint16_t display_get_width(void);
+uint16_t display_get_height(void);
 
 // New functions
 void clear_screen(uint16_t color);
