@@ -12,6 +12,7 @@ void fill_color(uint16_t color);
 // New functions
 void clear_screen(uint16_t color);
 void clear_region(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t color);
+/* Draws the on-screen portion of a row-major RGB565 image; off-screen pixels are clipped. */
 void draw_image(uint16_t x0, uint16_t y0, uint16_t w, uint16_t h, const uint16_t *image_data);
 
 #endif

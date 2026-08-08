@@ -3,6 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
+#include <stddef.h>
 
 #define PIN_NUM_MOSI 23
 #define PIN_NUM_MISO -1
@@ -11,6 +12,10 @@
 #define PIN_NUM_DC   2
 #define PIN_NUM_RST  4
 #define PIN_NUM_LED  15
+
+#define DISPLAY_WIDTH  240U
+#define DISPLAY_HEIGHT 320U
+#define SPI_TRANSFER_CHUNK_SIZE 4096U
 
 spi_device_handle_t spi;
 
@@ -124,20 +129,45 @@ void clear_region(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t c
 
 /* 3. New: Draw image from provided pixel buffer */
 void draw_image(uint16_t x0, uint16_t y0, uint16_t w, uint16_t h, const uint16_t *image_data) {
-    set_window(x0, y0, x0 + w - 1, y0 + h - 1);
+    /*
+     * Clip the destination rectangle before programming the controller window.
+     * Image data is row-major, so each visible row must start at its original
+     * width; sending one contiguous clipped block would scramble the rows.
+     */
+    if (image_data == NULL || w == 0U || h == 0U ||
+        x0 >= DISPLAY_WIDTH || y0 >= DISPLAY_HEIGHT) {
+        return;
+    }
+
+    uint16_t visible_w = w;
+    uint16_t visible_h = h;
+
+    if ((uint32_t)x0 + w > DISPLAY_WIDTH) {
+        visible_w = DISPLAY_WIDTH - x0;
+    }
+    if ((uint32_t)y0 + h > DISPLAY_HEIGHT) {
+        visible_h = DISPLAY_HEIGHT - y0;
+    }
+
+    set_window(x0, y0, x0 + visible_w - 1U, y0 + visible_h - 1U);
 
     gpio_set_level(PIN_NUM_DC, 1);
-    int total_pixels = w * h;
-    const uint8_t *data_ptr = (const uint8_t *)image_data;
+    for (uint16_t row = 0; row < visible_h; row++) {
+        const uint8_t *data_ptr = (const uint8_t *)(image_data + ((size_t)row * w));
+        size_t bytes_remaining = (size_t)visible_w * sizeof(*image_data);
 
-    // Transfer in chunks to avoid overflow
-    for (int offset = 0; offset < total_pixels * 2; offset += 4096) {
-        int chunk = ((total_pixels * 2 - offset) > 4096) ? 4096 : (total_pixels * 2 - offset);
-        spi_transaction_t t = {
-            .length = chunk * 8,
-            .tx_buffer = data_ptr + offset,
-        };
-        spi_device_transmit(spi, &t);
+        while (bytes_remaining > 0U) {
+            size_t chunk = bytes_remaining > SPI_TRANSFER_CHUNK_SIZE
+                               ? SPI_TRANSFER_CHUNK_SIZE
+                               : bytes_remaining;
+            spi_transaction_t t = {
+                .length = chunk * 8U,
+                .tx_buffer = data_ptr,
+            };
+            spi_device_transmit(spi, &t);
+            data_ptr += chunk;
+            bytes_remaining -= chunk;
+        }
     }
 }
 

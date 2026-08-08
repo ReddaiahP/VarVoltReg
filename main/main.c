@@ -2,6 +2,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "display.h"
+#include "image.h"
 
 // RGB565 color definitions
 #define COLOR_RED     0xF800
@@ -20,31 +21,10 @@ void app_main(void)
     display_gpio_init();
     display_spi_init();
     ili9341_init();
-
+    clear_screen(COLOR_YELLOW);   // black background
     while (1)
     {
-        clear_screen(COLOR_RED);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
-        clear_screen(COLOR_GREEN);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
-        clear_screen(COLOR_BLUE);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
-        clear_screen(COLOR_WHITE);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
-        clear_screen(COLOR_BLACK);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
-        clear_screen(COLOR_YELLOW);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
-        clear_screen(COLOR_CYAN);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
-        clear_screen(COLOR_MAGENTA);
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        
+        draw_image(0,0, PROFILE_WIDTH, PROFILE_HEIGHT, profilePic);
     }
 }
