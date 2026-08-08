@@ -23,12 +23,25 @@ void app_main(void)
     ili9341_init();
 
     /* Choose DISPLAY_ROTATION_0, _90, _180, or _270. */
-    display_set_rotation(DISPLAY_ROTATION_90);
-    clear_screen(COLOR_YELLOW);
+    display_set_rotation(DISPLAY_ROTATION_0);
+    clear_screen(COLOR_MAGENTA);
 
-    draw_image(50, 0, PROFILE_WIDTH, PROFILE_HEIGHT, profilePic);
+    display_image_animation_t profile_animation = {
+        .x = 0,
+        .end_x = 200,
+        .step = 1,
+        .y = 0U,
+        .width = PROFILE_WIDTH,
+        .height = PROFILE_HEIGHT,
+        .image_data = butterFly,
+        .background_color = COLOR_MAGENTA,
+    };
+
+    display_image_animation_start(&profile_animation);
 
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        display_image_animation_step(&profile_animation);
+        vTaskDelay(pdMS_TO_TICKS(1));
+    
     }
 }

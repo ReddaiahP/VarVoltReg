@@ -3,7 +3,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
+#include "esp_err.h"
+#include "esp_log.h"
 #include <stddef.h>
+#include <stdbool.h>
 
 #define PIN_NUM_MOSI 23
 #define PIN_NUM_MISO -1
@@ -15,6 +18,7 @@
 
 #define DISPLAY_WIDTH  240U
 #define DISPLAY_HEIGHT 320U
+#define DISPLAY_SPI_CLOCK_HZ (10U * 1000U * 1000U)
 #define SPI_TRANSFER_CHUNK_SIZE 4096U
 #define ILI9341_MADCTL 0x36U
 #define ILI9341_PIXFMT 0x3AU
@@ -26,6 +30,9 @@
 spi_device_handle_t spi;
 static uint16_t display_width = DISPLAY_WIDTH;
 static uint16_t display_height = DISPLAY_HEIGHT;
+static bool spi_ready;
+
+static const char *TAG = "display";
 
 void display_gpio_init(void) {
     gpio_set_direction(PIN_NUM_DC, GPIO_MODE_OUTPUT);
@@ -40,6 +47,10 @@ void display_gpio_init(void) {
 }
 
 void display_spi_init(void) {
+    if (spi_ready) {
+        return;
+    }
+
     spi_bus_config_t spi_config = {
         .mosi_io_num = PIN_NUM_MOSI,
         .miso_io_num = PIN_NUM_MISO,
@@ -50,18 +61,35 @@ void display_spi_init(void) {
     };
 
     spi_device_interface_config_t spi_device_config = {
-        .clock_speed_hz = 10 * 1000 * 1000,
+        .clock_speed_hz = DISPLAY_SPI_CLOCK_HZ,
         .mode = 0,
         .spics_io_num = PIN_NUM_CS,
         .queue_size = 1,
         .flags = 0
     };
 
-    spi_bus_initialize(SPI2_HOST, &spi_config, SPI_DMA_CH_AUTO);
-    spi_bus_add_device(SPI2_HOST, &spi_device_config, &spi);
+    esp_err_t result = spi_bus_initialize(SPI2_HOST, &spi_config, SPI_DMA_CH_AUTO);
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "spi_bus_initialize failed: %s", esp_err_to_name(result));
+        return;
+    }
+
+    result = spi_bus_add_device(SPI2_HOST, &spi_device_config, &spi);
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "spi_bus_add_device failed: %s", esp_err_to_name(result));
+        spi_bus_free(SPI2_HOST);
+        spi = NULL;
+        return;
+    }
+
+    spi_ready = true;
 }
 
 void send_cmd(uint8_t cmd) {
+    if (!spi_ready) {
+        return;
+    }
+
     gpio_set_level(PIN_NUM_DC, 0);
     spi_transaction_t t = {
         .length = 8,
@@ -71,6 +99,10 @@ void send_cmd(uint8_t cmd) {
 }
 
 void send_data(const uint8_t *data, int len) {
+    if (!spi_ready || data == NULL || len <= 0) {
+        return;
+    }
+
     gpio_set_level(PIN_NUM_DC, 1);
     spi_transaction_t t = {
         .length = len * 8,
@@ -80,6 +112,10 @@ void send_data(const uint8_t *data, int len) {
 }
 
 static void send_pixels(const uint8_t *data, size_t byte_count) {
+    if (!spi_ready || data == NULL) {
+        return;
+    }
+
     gpio_set_level(PIN_NUM_DC, 1);
 
     while (byte_count > 0U) {
@@ -224,6 +260,60 @@ void draw_image(uint16_t x0, uint16_t y0, uint16_t w, uint16_t h, const uint16_t
         const uint8_t *data_ptr = (const uint8_t *)(image_data + ((size_t)row * w));
         send_pixels(data_ptr, (size_t)visible_w * sizeof(*image_data));
     }
+}
+
+void display_image_animation_start(display_image_animation_t *animation) {
+    if (animation == NULL || animation->image_data == NULL ||
+        animation->width == 0U || animation->height == 0U || animation->x < 0) {
+        return;
+    }
+
+    draw_image((uint16_t)animation->x, animation->y,
+               animation->width, animation->height, animation->image_data);
+}
+
+void display_image_animation_step(display_image_animation_t *animation) {
+    if (animation == NULL || animation->image_data == NULL ||
+        animation->width == 0U || animation->height == 0U ||
+        animation->step == 0U || animation->x < 0 || animation->end_x < 0) {
+        return;
+    }
+
+    if (animation->x == animation->end_x) {
+        return;
+    }
+
+    int32_t previous_x = animation->x;
+    int32_t next_x = previous_x;
+
+    if (animation->end_x > previous_x) {
+        next_x += animation->step;
+        if (next_x > animation->end_x) {
+            next_x = animation->end_x;
+        }
+    } else {
+        next_x -= animation->step;
+        if (next_x < animation->end_x) {
+            next_x = animation->end_x;
+        }
+    }
+
+    draw_image((uint16_t)next_x, animation->y,
+               animation->width, animation->height, animation->image_data);
+
+    if (next_x > previous_x) {
+        clear_region((uint16_t)previous_x, animation->y,
+                     (uint16_t)(next_x - 1),
+                     animation->y + animation->height - 1U,
+                     animation->background_color);
+    } else {
+        clear_region((uint16_t)(next_x + animation->width), animation->y,
+                     (uint16_t)(previous_x + animation->width - 1),
+                     animation->y + animation->height - 1U,
+                     animation->background_color);
+    }
+
+    animation->x = (int16_t)next_x;
 }
 
 void ili9341_init(void) {
