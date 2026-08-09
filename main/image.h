@@ -1,11 +1,11 @@
-#ifndef IMAGE_H
-#define IMAGE_H
+// #ifndef IMAGE_H
+// #define IMAGE_H
 
-#include <stdint.h>
+// #include <stdint.h>
 
-#define PROFILE_WIDTH 240
-#define PROFILE_HEIGHT 320
+// #define PROFILE_WIDTH 240
+// #define PROFILE_HEIGHT 320
 
-extern const uint16_t butterFly[];
+// extern const uint16_t butterFly[];
 
-#endif
+// #endif
