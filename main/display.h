@@ -4,6 +4,14 @@
 #include "driver/spi_master.h"
 #include <stdint.h>
 
+#define COLOR_LIGHT_GRAY 0xDEDB
+#define COLOR_BLACK 0x0000
+#define COLOR_WHITE 0xFFFF
+#define COLOR_RED 0xF800
+#define COLOR_GREEN 0x07E0
+#define COLOR_BLUE 0x001F
+#define COLOR_CYAN 0x07FF
+
 typedef enum {
     DISPLAY_ROTATION_0 = 0,
     DISPLAY_ROTATION_90,
